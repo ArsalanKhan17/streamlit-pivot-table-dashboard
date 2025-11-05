@@ -2,17 +2,267 @@
 Unit tests for the core module of the Pivot Table Dashboard.
 
 Tests are organized by functionality:
-1. Data Loading - CSV parsing and validation
-2. Filtering - Numeric and categorical filters
-3. Pivot/Aggregation - GroupBy operations with various aggregation functions
-4. High-priority cases - End-to-end scenarios
+1. New Helper Functions - read_csv_safe, sanitize_columns, get_unique_values,
+   filter_dataframe, detect_numeric_columns, to_csv_bytes
+2. Data Loading - CSV parsing and validation
+3. Filtering - Numeric and categorical filters
+4. Pivot/Aggregation - GroupBy operations with various aggregation functions
+5. High-priority cases - End-to-end scenarios
 """
 
 import unittest
 import pandas as pd
 import io
 import numpy as np
-from core import load_csv, apply_filters, build_pivot
+from core import (
+    load_csv,
+    apply_filters,
+    build_pivot,
+    read_csv_safe,
+    sanitize_columns,
+    get_unique_values,
+    filter_dataframe,
+    detect_numeric_columns,
+    to_csv_bytes
+)
+
+
+# ============================================================================
+# Tests for New Helper Functions
+# ============================================================================
+
+
+class TestReadCsvSafe(unittest.TestCase):
+    """Test the read_csv_safe() helper function."""
+
+    def test_read_csv_safe_valid(self):
+        """Test reading a valid CSV."""
+        csv_data = "a,b,c\n1,2,3\n4,5,6"
+        file_obj = io.StringIO(csv_data)
+        df = read_csv_safe(file_obj)
+        self.assertEqual(df.shape, (2, 3))
+        self.assertListEqual(list(df.columns), ["a", "b", "c"])
+
+    def test_read_csv_safe_empty(self):
+        """Test reading an empty CSV raises ValueError."""
+        csv_data = ""
+        file_obj = io.StringIO(csv_data)
+        with self.assertRaises(ValueError):
+            read_csv_safe(file_obj)
+
+    def test_read_csv_safe_with_data(self):
+        """Test CSV with headers and data."""
+        csv_data = "name,age\nAlice,25\nBob,30"
+        file_obj = io.StringIO(csv_data)
+        df = read_csv_safe(file_obj)
+        self.assertEqual(len(df), 2)
+        self.assertEqual(df.iloc[0]["name"], "Alice")
+
+
+class TestSanitizeColumns(unittest.TestCase):
+    """Test the sanitize_columns() helper function."""
+
+    def test_sanitize_trim_whitespace(self):
+        """Test that column names are trimmed."""
+        df = pd.DataFrame({" col1 ": [1, 2], "col2 ": [3, 4]})
+        df_clean = sanitize_columns(df)
+        self.assertListEqual(list(df_clean.columns), ["col1", "col2"])
+
+    def test_sanitize_preserves_data(self):
+        """Test that data is preserved after sanitization."""
+        df = pd.DataFrame({" col1 ": [1, 2], " col2 ": [3, 4]})
+        df_clean = sanitize_columns(df)
+        self.assertEqual(df_clean.iloc[0]["col1"], 1)
+        self.assertEqual(df_clean.iloc[1]["col2"], 4)
+
+    def test_sanitize_returns_copy(self):
+        """Test that sanitize_columns returns a new DataFrame."""
+        df = pd.DataFrame({"col": [1, 2]})
+        df_clean = sanitize_columns(df)
+        self.assertIsNot(df, df_clean)
+
+    def test_sanitize_with_clean_columns(self):
+        """Test sanitization with already clean columns."""
+        df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
+        df_clean = sanitize_columns(df)
+        self.assertListEqual(list(df_clean.columns), ["col1", "col2"])
+
+
+class TestGetUniqueValues(unittest.TestCase):
+    """Test the get_unique_values() helper function."""
+
+    def test_get_unique_values_string(self):
+        """Test getting unique string values."""
+        df = pd.DataFrame({"col": ["a", "b", "a", "c"]})
+        vals = get_unique_values(df, "col", as_str=True)
+        self.assertListEqual(vals, ["a", "b", "c"])
+
+    def test_get_unique_values_numeric(self):
+        """Test getting unique numeric values as strings."""
+        df = pd.DataFrame({"col": [1, 2, 1, 3]})
+        vals = get_unique_values(df, "col", as_str=True)
+        self.assertListEqual(vals, ["1", "2", "3"])
+
+    def test_get_unique_values_with_nan(self):
+        """Test that NaN values are excluded."""
+        df = pd.DataFrame({"col": [1.0, 2.0, np.nan, 1.0]})
+        vals = get_unique_values(df, "col", as_str=True)
+        self.assertEqual(len(vals), 2)
+        self.assertIn("1.0", vals)
+        self.assertIn("2.0", vals)
+
+    def test_get_unique_values_nonexistent_column(self):
+        """Test error when column doesn't exist."""
+        df = pd.DataFrame({"col": [1, 2]})
+        with self.assertRaises(KeyError):
+            get_unique_values(df, "nonexistent")
+
+    def test_get_unique_values_sorted(self):
+        """Test that values are returned sorted."""
+        df = pd.DataFrame({"col": ["z", "a", "m", "a"]})
+        vals = get_unique_values(df, "col", as_str=True)
+        self.assertListEqual(vals, ["a", "m", "z"])
+
+
+class TestFilterDataframe(unittest.TestCase):
+    """Test the filter_dataframe() helper function."""
+
+    def setUp(self):
+        """Create a sample DataFrame for testing."""
+        self.df = pd.DataFrame({
+            "name": ["Alice", "Bob", "Charlie"],
+            "age": [25, 30, 35],
+            "city": ["NYC", "LA", "NYC"]
+        })
+
+    def test_filter_empty_filters(self):
+        """Test with no filters returns copy."""
+        filtered = filter_dataframe(self.df, {})
+        pd.testing.assert_frame_equal(self.df, filtered)
+
+    def test_filter_string_values(self):
+        """Test filtering string columns."""
+        filtered = filter_dataframe(self.df, {"city": ["NYC"]})
+        self.assertEqual(len(filtered), 2)
+        self.assertTrue((filtered["city"] == "NYC").all())
+
+    def test_filter_multiple_values(self):
+        """Test filtering with multiple values."""
+        filtered = filter_dataframe(self.df, {"name": ["Alice", "Bob"]})
+        self.assertEqual(len(filtered), 2)
+
+    def test_filter_numeric_values(self):
+        """Test filtering numeric columns with string input."""
+        filtered = filter_dataframe(self.df, {"age": ["25", "30"]})
+        self.assertEqual(len(filtered), 2)
+        self.assertTrue(set(filtered["age"]) == {25, 30})
+
+    def test_filter_nonexistent_column(self):
+        """Test error when filtering nonexistent column."""
+        with self.assertRaises(KeyError):
+            filter_dataframe(self.df, {"nonexistent": ["value"]})
+
+    def test_filter_no_matches(self):
+        """Test filter that matches nothing."""
+        filtered = filter_dataframe(self.df, {"city": ["Chicago"]})
+        self.assertEqual(len(filtered), 0)
+
+    def test_filter_multiple_columns(self):
+        """Test filtering multiple columns."""
+        filtered = filter_dataframe(self.df, {
+            "city": ["NYC"],
+            "age": ["25"]
+        })
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered.iloc[0]["name"], "Alice")
+
+
+class TestDetectNumericColumns(unittest.TestCase):
+    """Test the detect_numeric_columns() helper function."""
+
+    def test_detect_numeric_basic(self):
+        """Test detecting numeric columns."""
+        df = pd.DataFrame({
+            "int_col": [1, 2, 3],
+            "float_col": [1.1, 2.2, 3.3],
+            "str_col": ["a", "b", "c"]
+        })
+        numeric = detect_numeric_columns(df)
+        self.assertSetEqual(set(numeric), {"int_col", "float_col"})
+
+    def test_detect_numeric_all_numeric(self):
+        """Test when all columns are numeric."""
+        df = pd.DataFrame({
+            "a": [1, 2, 3],
+            "b": [1.1, 2.2, 3.3]
+        })
+        numeric = detect_numeric_columns(df)
+        self.assertSetEqual(set(numeric), {"a", "b"})
+
+    def test_detect_numeric_no_numeric(self):
+        """Test when no columns are numeric."""
+        df = pd.DataFrame({
+            "a": ["x", "y", "z"],
+            "b": ["p", "q", "r"]
+        })
+        numeric = detect_numeric_columns(df)
+        self.assertListEqual(numeric, [])
+
+    def test_detect_numeric_mixed(self):
+        """Test mixed data types."""
+        df = pd.DataFrame({
+            "int": [1, 2],
+            "float": [1.5, 2.5],
+            "str": ["a", "b"],
+            "bool": [True, False]
+        })
+        numeric = detect_numeric_columns(df)
+        self.assertIn("int", numeric)
+        self.assertIn("float", numeric)
+        self.assertNotIn("str", numeric)
+
+
+class TestToCsvBytes(unittest.TestCase):
+    """Test the to_csv_bytes() helper function."""
+
+    def test_to_csv_bytes_basic(self):
+        """Test converting DataFrame to CSV bytes."""
+        df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+        csv_bytes = to_csv_bytes(df)
+        self.assertIsInstance(csv_bytes, bytes)
+
+    def test_to_csv_bytes_contains_header(self):
+        """Test that CSV contains header."""
+        df = pd.DataFrame({"col1": [1, 2]})
+        csv_bytes = to_csv_bytes(df)
+        self.assertIn(b"col1", csv_bytes)
+
+    def test_to_csv_bytes_contains_data(self):
+        """Test that CSV contains data."""
+        df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+        csv_bytes = to_csv_bytes(df)
+        self.assertIn(b"1", csv_bytes)
+        self.assertIn(b"3", csv_bytes)
+
+    def test_to_csv_bytes_roundtrip(self):
+        """Test that CSV can be read back."""
+        df = pd.DataFrame({"name": ["Alice", "Bob"], "age": [25, 30]})
+        csv_bytes = to_csv_bytes(df)
+
+        # Read back the CSV
+        df_read = pd.read_csv(io.BytesIO(csv_bytes))
+        pd.testing.assert_frame_equal(df, df_read)
+
+    def test_to_csv_bytes_with_special_chars(self):
+        """Test CSV with special characters."""
+        df = pd.DataFrame({"name": ["Alice & Bob", "Charlie,Diana"]})
+        csv_bytes = to_csv_bytes(df)
+        self.assertIsInstance(csv_bytes, bytes)
+
+
+# ============================================================================
+# Original Tests (existing functionality)
+# ============================================================================
 
 
 class TestDataLoading(unittest.TestCase):
