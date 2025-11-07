@@ -292,6 +292,31 @@ def detect_numeric_columns(df):
     return [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])]
 
 
+def schema_snapshot(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Create a snapshot of DataFrame schema for AI Transform.
+
+    Args:
+        df: Input DataFrame
+
+    Returns:
+        Dictionary with schema information including columns, dtypes, row count, and sample values
+    """
+    if df.empty:
+        sample_values = {col: None for col in df.columns}
+    else:
+        sample_values = df.iloc[0].to_dict()
+
+    schema = {
+        "columns": df.columns.tolist(),
+        "dtypes": {col: str(dtype) for col, dtype in df.dtypes.items()},
+        "nrows": len(df),
+        "null_rates": (df.isnull().sum() / len(df)).to_dict() if len(df) > 0 else {},
+        "sample_values": sample_values,
+    }
+    return schema
+
+
 def to_csv_bytes(df):
     """
     Convert DataFrame to CSV bytes for downloading.

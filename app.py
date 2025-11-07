@@ -12,6 +12,7 @@ from core import (
     detect_numeric_columns,
     to_csv_bytes,
     build_pivot,
+    schema_snapshot,
 )
 
 # Page configuration
@@ -149,6 +150,200 @@ def render_pivot_section(filtered_df, file_key):
         )
 
     return group_by_cols, agg_col, agg_functions
+
+
+def render_ai_transform_tab():
+    """Render the AI Transform tab - Phase 0 skeleton."""
+    st.header("🤖 AI Transform")
+
+    # Initialize session state for AI Transform
+    if "ai_code" not in st.session_state:
+        st.session_state.ai_code = None
+    if "ai_preview_df" not in st.session_state:
+        st.session_state.ai_preview_df = None
+
+    # Get the first loaded dataset to work with
+    if not st.session_state.datasets:
+        st.info("👈 Please upload a CSV file first to use AI Transform")
+        return
+
+    first_dataset_key = list(st.session_state.datasets.keys())[0]
+    df = st.session_state.datasets[first_dataset_key]["df"]
+
+    # ========== 1. CONTEXT CARD ==========
+    with st.expander("📊 DataFrame Context", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Schema Information")
+            schema = schema_snapshot(df)
+            st.write(f"**Rows:** {schema['nrows']}")
+            st.write(f"**Columns:** {len(schema['columns'])}")
+
+            st.write("**Column Types:**")
+            dtype_df = pd.DataFrame({
+                "Column": schema['columns'],
+                "Type": [schema['dtypes'][col] for col in schema['columns']]
+            })
+            st.dataframe(dtype_df, use_container_width=True)
+
+        with col2:
+            st.subheader("Null Rates")
+            null_rates_list = []
+            for col in schema['columns']:
+                null_rate = schema['null_rates'].get(col, 0)
+                null_rates_list.append({
+                    "Column": col,
+                    "Null %": f"{null_rate:.1%}"
+                })
+            null_df = pd.DataFrame(null_rates_list)
+            st.dataframe(null_df, use_container_width=True)
+
+        # Show sample rows
+        if st.checkbox("Show sample rows", value=True):
+            st.write("**First 5 rows:**")
+            st.dataframe(df.head(5), use_container_width=True)
+
+    # ========== 2. MODEL & SETTINGS ==========
+    with st.expander("⚙️ Model & Settings", expanded=True):
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.write("**LLM Provider**")
+            vendor = st.selectbox(
+                "Select vendor",
+                options=["openai"],  # Will expand with local later
+                key="ai_vendor"
+            )
+
+        with col2:
+            st.write("**Model**")
+            if vendor == "openai":
+                models = ["gpt-4-turbo-preview", "gpt-4", "gpt-3.5-turbo"]
+                model = st.selectbox("Select model", options=models, key="ai_model")
+            else:
+                model = "local"
+
+        with col3:
+            st.write("**Temperature**")
+            temperature = st.slider(
+                "Temperature",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.2,
+                step=0.05,
+                key="ai_temperature"
+            )
+
+        # Warning banner for cloud model
+        if vendor == "openai":
+            st.warning("⚠️ Your data will be sent to OpenAI. Make sure to review data privacy policies.")
+
+    # ========== 3. PROMPT COMPOSER ==========
+    with st.expander("💬 Prompt Composer", expanded=True):
+        col1, col2 = st.columns([4, 1])
+
+        with col1:
+            prompt = st.text_area(
+                "Describe the transformation you want to apply",
+                placeholder="Example: Filter rows where 'Annual CO₂ emissions (per capita)' > 1.0 and add a new column 'high_emitter' set to True",
+                height=120,
+                key="ai_prompt"
+            )
+
+        with col2:
+            st.write("**Quick Tips**")
+            st.caption("- Use column names as they appear")
+            st.caption("- Be specific about operations")
+            st.caption("- Can use pandas/numpy")
+
+        # Quick insert buttons for column names
+        st.write("**Column shortcuts:**")
+        cols_display = st.columns(min(5, len(schema['columns'])))
+        for idx, col_name in enumerate(schema['columns'][:5]):
+            with cols_display[idx]:
+                if st.button(f"📍 {col_name[:15]}", key=f"col_btn_{idx}"):
+                    st.session_state.ai_prompt = (st.session_state.ai_prompt or "") + f"'{col_name}'"
+
+    # ========== 4. CODE GENERATION & PREVIEW ==========
+    st.header("4️⃣ Generated Code")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("✨ Generate Code", key="btn_generate"):
+            st.info("🚀 [PHASE 1] LLM integration coming soon - will generate actual code here")
+            st.session_state.ai_code = """def transform(df):
+    # Placeholder: Filter rows where Annual CO₂ emissions > 1.0
+    result = df[df['Annual CO₂ emissions (per capita)'] > 1.0].copy()
+    # Add new column
+    result['high_emitter'] = True
+    return result"""
+
+    with col2:
+        if st.button("📖 Explain Code", key="btn_explain"):
+            st.info("💡 Explanation feature coming in Phase 1")
+
+    with col3:
+        if st.button("🔄 Reset", key="btn_reset"):
+            st.session_state.ai_code = None
+            st.session_state.ai_preview_df = None
+            st.rerun()
+
+    if st.session_state.ai_code:
+        st.subheader("Code Preview")
+        st.code(st.session_state.ai_code, language="python")
+
+        st.info("📌 Code validation and security checks coming in Phase 2")
+
+    # ========== 5. DRY-RUN PREVIEW ==========
+    st.header("5️⃣ Dry-Run Preview")
+
+    if st.session_state.ai_code:
+        if st.button("▶️  Run on Sample (2%)", key="btn_dryrun"):
+            st.info("🧪 [PHASE 2] Dry-run execution coming soon - will show preview on sample data")
+            st.session_state.ai_preview_df = df.sample(n=min(int(len(df) * 0.02), 100), random_state=42)
+
+        if st.session_state.ai_preview_df is not None:
+            st.subheader("Sample Result")
+            st.dataframe(st.session_state.ai_preview_df, use_container_width=True)
+
+            st.subheader("Diff Summary")
+            st.info("📊 Diff analysis coming in Phase 2")
+    else:
+        st.info("👆 Generate code first to preview results")
+
+    # ========== 6. APPLY / UNDO ==========
+    st.header("6️⃣ Apply & Undo")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("✅ Apply to Working DataFrame", key="btn_apply"):
+            st.info("🔄 [PHASE 3] Apply and undo functionality coming soon")
+
+    with col2:
+        if st.button("⏮️  Undo Last", key="btn_undo"):
+            st.info("↩️  Undo feature coming in Phase 3")
+
+    with col3:
+        st.write("")  # Spacer
+
+    # Transform log table
+    st.subheader("Transform Log")
+    st.info("📋 Transform history logging coming in Phase 3")
+
+    # ========== 7. EXPORT ==========
+    st.header("7️⃣ Export")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("**Export Transform Log**")
+        if st.button("📄 Export as JSON", key="btn_export_json"):
+            st.info("💾 Export functionality coming in Phase 4")
+
+    with col2:
+        st.write("**Export Python Recipe**")
+        if st.button("🐍 Export as Python", key="btn_export_py"):
+            st.info("💾 Export functionality coming in Phase 4")
 
 
 def render_pivot_results(filtered_df, group_by_cols, agg_col, agg_functions, file_key):
@@ -380,9 +575,10 @@ if uploaded_files:
 
     if st.session_state.datasets:
         tab_names = [st.session_state.datasets[k]["name"] for k in st.session_state.datasets]
+        tab_names.append("AI Transform")
         tabs = st.tabs(tab_names)
 
-        for tab, (file_key, dataset) in zip(tabs, st.session_state.datasets.items()):
+        for tab, (file_key, dataset) in zip(tabs[:-1], st.session_state.datasets.items()):
             with tab:
                 df = dataset["df"]
 
@@ -408,6 +604,10 @@ if uploaded_files:
                         mime="text/csv",
                         key=f"filtered_download_{file_key}"
                     )
+
+        # AI Transform Tab
+        with tabs[-1]:
+            render_ai_transform_tab()
 
 else:
     st.info("👆 Upload one or more CSV files to get started!")
